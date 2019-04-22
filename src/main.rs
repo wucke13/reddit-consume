@@ -1,4 +1,3 @@
-#[macro_use]
 extern crate clap;
 extern crate reqwest;
 extern crate serde_json;
@@ -9,10 +8,10 @@ mod reddit;
 use reddit::{RedditRequest, SortBy, Timeslot};
 
 fn main() {
-    let matches = App::new("My Super Program")
-        .version("1.0")
-        .author("Kevin K. <kbknapp@gmail.com>")
-        .about("Does awesome things")
+    let matches = App::new(env!("CARGO_PKG_NAME"))
+        .version(env!("CARGO_PKG_VERSION"))
+        .author(env!("CARGO_PKG_AUTHORS"))
+        .about(env!("CARGO_PKG_DESCRIPTION"))
         .arg(
             Arg::with_name("subreddit")
                 .value_name("SUBREDDIT")
@@ -64,11 +63,9 @@ fn main() {
         _ => panic!("unable to parse sort-by"),
     };
 
-    let rr = RedditRequest {
-        subreddit: subreddit,
-        sort_by: sort_by,
-        after: None,
-    };
+    let mut rr: RedditRequest = reddit::reddit_request(&subreddit, sort_by);
+
+    println!("{}", rr.get_url());
 
     rr.play();
 }
