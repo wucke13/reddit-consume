@@ -13,9 +13,9 @@ fn main() {
         .author(env!("CARGO_PKG_AUTHORS"))
         .about(env!("CARGO_PKG_DESCRIPTION"))
         .arg(
-            Arg::with_name("subreddit")
-                .value_name("SUBREDDIT")
-                .help("Sets which subreddit to consume")
+            Arg::with_name("resource")
+                .value_name("RESOURCE")
+                .help("Sets which reddit reosurce to consume. For example r/gif")
                 .required(true)
                 .index(1),
         )
@@ -35,7 +35,7 @@ fn main() {
         )
         .get_matches();
 
-    let subreddit = matches.value_of("subreddit").unwrap().to_string();
+    let resource = matches.value_of("resource").unwrap().to_string();
     let sort_by = match matches.value_of("sort-by").unwrap_or("hot") {
         "hot" => SortBy::Hot,
         "top" => SortBy::Top(match matches.value_of("timeslot").unwrap_or("day") {
@@ -63,7 +63,7 @@ fn main() {
         _ => panic!("unable to parse sort-by"),
     };
 
-    let mut rr: RedditRequest = reddit::reddit_request(&subreddit, sort_by);
+    let mut rr: RedditRequest = reddit::reddit_request(&resource, sort_by);
 
     println!("{}", rr.get_url());
 

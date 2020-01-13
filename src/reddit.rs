@@ -38,15 +38,15 @@ impl Display for Timeslot {
 }
 
 pub struct RedditRequest {
-    pub subreddit: String,
+    pub resource: String,
     pub sort_by: SortBy,
     pub after: Option<String>,
     posts: Vec<Value>,
 }
 
-pub fn reddit_request(subreddit: &str, sort_by: SortBy) -> RedditRequest {
+pub fn reddit_request(resource: &str, sort_by: SortBy) -> RedditRequest {
     RedditRequest {
-        subreddit: subreddit.to_string(),
+        resource: resource.to_string(),
         sort_by: sort_by,
         after: None,
         posts: Vec::new(),
@@ -56,8 +56,8 @@ pub fn reddit_request(subreddit: &str, sort_by: SortBy) -> RedditRequest {
 impl RedditRequest {
     pub fn get_url(&self) -> String {
         let mut result = format!(
-            "https://reddit.com/r/{}/{}.json?limit=100",
-            self.subreddit, self.sort_by
+            "https://reddit.com/{}/{}.json?limit=100",
+            self.resource, self.sort_by
         );
 
         let timeslot = match &self.sort_by {
