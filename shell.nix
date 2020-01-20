@@ -7,7 +7,7 @@ stdenv.mkDerivation {
     zsh
     pkg-config rustup
     #musl.all
-    openssl.dev
+    #openssl.dev
   ];
 
   shellHook = ''

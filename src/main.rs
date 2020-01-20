@@ -1,10 +1,9 @@
-extern crate clap;
-extern crate reqwest;
-extern crate serde_json;
+#![forbid(unsafe_code)]
 
 use clap::{App, Arg};
 
 mod reddit;
+
 use reddit::{RedditRequest, SortBy, Timeslot};
 
 fn main() {
@@ -63,7 +62,7 @@ fn main() {
         _ => panic!("unable to parse sort-by"),
     };
 
-    let mut rr: RedditRequest = reddit::reddit_request(&resource, sort_by);
+    let mut rr: RedditRequest = reddit::RedditRequest::new(&resource, sort_by);
 
     println!("{}", rr.get_url());
 

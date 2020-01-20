@@ -1,7 +1,7 @@
-use serde_json::Value;
-use std::fmt;
-use std::fmt::Display;
+use std::fmt::{self, Display};
 use std::process::Command;
+
+use ureq::SerdeValue;
 
 #[derive(Debug)]
 pub enum SortBy {
@@ -41,19 +41,19 @@ pub struct RedditRequest {
     pub resource: String,
     pub sort_by: SortBy,
     pub after: Option<String>,
-    posts: Vec<Value>,
-}
-
-pub fn reddit_request(resource: &str, sort_by: SortBy) -> RedditRequest {
-    RedditRequest {
-        resource: resource.to_string(),
-        sort_by: sort_by,
-        after: None,
-        posts: Vec::new(),
-    }
+    posts: Vec<SerdeValue>,
 }
 
 impl RedditRequest {
+    pub fn new(resource: &str, sort_by: SortBy) -> Self {
+        Self {
+            resource: resource.to_string(),
+            sort_by: sort_by,
+            after: None,
+            posts: Vec::new(),
+        }
+    }
+
     pub fn get_url(&self) -> String {
         let mut result = format!(
             "https://reddit.com/{}/{}.json?limit=100",
@@ -74,12 +74,9 @@ impl RedditRequest {
     }
 
     pub fn fetch_posts(&mut self) {
-        let response = reqwest::get(&self.get_url())
-            .expect("unable to perform HTTP request")
-            .text()
-            .expect("unable to retrieve body from HTTP response");
-        let json: Value =
-            serde_json::from_str(&response).expect("unable to parse JSON in HTTP response body");
+        let response = ureq::get(&self.get_url()).call();
+        let json = response.into_json().unwrap();
+
         self.posts = json["data"]["children"].as_array().unwrap().to_vec();
     }
 
