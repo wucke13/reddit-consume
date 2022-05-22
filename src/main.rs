@@ -1,70 +1,106 @@
 #![forbid(unsafe_code)]
 
-use clap::{App, Arg};
+use std::process::{Command, Stdio};
 
-mod reddit;
+use clap::Parser;
+use mpvipc::*;
+use roux::util::{FeedOption, TimePeriod};
 
-use reddit::{RedditRequest, SortBy, Timeslot};
+//use reddit::{RedditRequest, SortBy, Timeslot};
 
-fn main() {
-    let matches = App::new(env!("CARGO_PKG_NAME"))
-        .version(env!("CARGO_PKG_VERSION"))
-        .author(env!("CARGO_PKG_AUTHORS"))
-        .about(env!("CARGO_PKG_DESCRIPTION"))
-        .arg(
-            Arg::with_name("resource")
-                .value_name("RESOURCE")
-                .help("Sets which reddit reosurce to consume. For example r/gif")
-                .required(true)
-                .index(1),
-        )
-        .arg(
-            Arg::with_name("sort-by")
-                .short("s")
-                .long("sort-by")
-                .help("Sort by either hot, top, new, controversial or rising")
-                .takes_value(true),
-        )
-        .arg(
-            Arg::with_name("timeslot")
-                .short("t")
-                .long("timeslot")
-                .help("show posts from either the last hour, day, week, month, year or all")
-                .takes_value(true),
-        )
-        .get_matches();
+#[derive(Debug, clap::Parser)]
+#[clap(about, author, version)]
+struct Opts {
+    #[clap()]
+    subreddit: String,
 
-    let resource = matches.value_of("resource").unwrap().to_string();
-    let sort_by = match matches.value_of("sort-by").unwrap_or("hot") {
-        "hot" => SortBy::Hot,
-        "top" => SortBy::Top(match matches.value_of("timeslot").unwrap_or("day") {
-            "hour" => Timeslot::Hour,
-            "day" => Timeslot::Day,
-            "week" => Timeslot::Week,
-            "month" => Timeslot::Month,
-            "year" => Timeslot::Year,
-            "all" => Timeslot::All,
-            _ => panic!("unable to parse timeslot"),
-        }),
-        "new" => SortBy::New,
-        "controversial" => {
-            SortBy::Controversial(match matches.value_of("timeslot").unwrap_or("day") {
-                "hour" => Timeslot::Hour,
-                "day" => Timeslot::Day,
-                "week" => Timeslot::Week,
-                "month" => Timeslot::Month,
-                "year" => Timeslot::Year,
-                "all" => Timeslot::All,
-                _ => panic!("unable to parse timeslot"),
-            })
+    #[clap(subcommand)]
+    sort_by: SortBy,
+}
+
+#[derive(Debug, clap::Subcommand, Clone, Copy)]
+pub enum SortBy {
+    Hot,
+    #[clap(subcommand)]
+    Top(Period),
+    New,
+    Rising,
+}
+
+#[derive(Debug, clap::Subcommand, Clone, Copy)]
+pub enum Period {
+    Hour,
+    Day,
+    Week,
+    Month,
+    Year,
+    All,
+}
+
+impl Into<TimePeriod> for Period {
+    fn into(self) -> TimePeriod {
+        match self {
+            Period::Hour => TimePeriod::Now,
+            Period::Day => TimePeriod::Today,
+            Period::Week => TimePeriod::ThisWeek,
+            Period::Month => TimePeriod::ThisMonth,
+            Period::Year => TimePeriod::ThisYear,
+            Period::All => TimePeriod::AllTime,
         }
-        "rising" => SortBy::Rising,
-        _ => panic!("unable to parse sort-by"),
+    }
+}
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    // io::Result<()> {
+    let opts = Opts::parse();
+
+    let ipc_socket = "/tmp/mpvsocket";
+
+    // prepare mpv
+    let _mpv_process = Command::new("mpv")
+        .arg("--idle=yes")
+        .arg("--force-window")
+        .arg(format!("--input-ipc-server={ipc_socket}"))
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .spawn()
+        .expect("failed to execute child");
+
+    let sub = roux::subreddit::Subreddit::new(&opts.subreddit);
+    let limit = 50;
+    let options = match opts.sort_by {
+        SortBy::Top(p) => Some(FeedOption::new().period(p.into())),
+        _ => None,
     };
 
-    let mut rr: RedditRequest = reddit::RedditRequest::new(&resource, sort_by);
+    let submissions = match opts.sort_by {
+        SortBy::Hot => sub.hot(limit, options).await,
+        SortBy::Top(_) => sub.top(limit, options).await,
+        SortBy::New => sub.latest(limit, options).await,
+        SortBy::Rising => sub.rising(limit, options).await,
+    }?;
 
-    println!("{}", rr.get_url());
+    //
+    std::thread::sleep(std::time::Duration::from_secs(1));
+    let mpv = Mpv::connect("/tmp/mpvsocket")?;
 
-    rr.play();
+    for url in submissions
+        .data
+        .children
+        .iter()
+        .map(|c| c.data.url.as_ref())
+        .filter_map(std::convert::identity)
+    {
+        println!("adding {url}");
+        mpv.playlist_add(
+            &url,
+            PlaylistAddTypeOptions::File,
+            PlaylistAddOptions::Append,
+        )?;
+    }
+
+    mpv.playlist_play_id(0)?;
+
+    Ok(())
 }

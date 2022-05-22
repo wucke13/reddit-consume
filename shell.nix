@@ -1,13 +1,14 @@
-with import <nixpkgs> {};
+with import <nixpkgs> { };
 
 stdenv.mkDerivation {
   name = "rust-env";
 
   buildInputs = [
     zsh
-    pkg-config rustup
-    #musl.all
-    #openssl.dev
+    pkg-config
+    rustup
+    openssl.dev
+    mpv
   ];
 
   shellHook = ''
