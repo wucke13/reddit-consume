@@ -46,9 +46,9 @@ pub enum Period {
     All,
 }
 
-impl Into<TimePeriod> for Period {
-    fn into(self) -> TimePeriod {
-        match self {
+impl From<Period> for TimePeriod {
+    fn from(p: Period) -> TimePeriod {
+        match p {
             Period::Hour => TimePeriod::Now,
             Period::Day => TimePeriod::Today,
             Period::Week => TimePeriod::ThisWeek,
@@ -88,8 +88,7 @@ async fn request(
             .data
             .children
             .iter()
-            .map(|c| c.data.url.as_ref())
-            .filter_map(std::convert::identity)
+            .filter_map(|c| c.data.url.as_ref())
             .cloned()
             .collect(),
         after,
@@ -136,32 +135,29 @@ async fn main() -> anyhow::Result<()> {
 
     mpv.playlist_play_id(0)?;
     loop {
-        match mpv.event_listen()? {
-            Event::EndFile => {
-                let p_len: usize = mpv.get_property("playlist-count")?;
-                let p_pos: usize = mpv.get_property("playlist-pos")?;
-                if p_len - p_pos <= opts.min_buffer_size {
-                    println!("after = {after:?}");
-                    let (new, new_after) = request(
-                        &opts.subreddit,
-                        opts.sort_by,
-                        opts.buffer_increase as u32,
-                        after.clone(),
-                    )
-                    .await?;
-                    after = new_after;
+        if let Event::EndFile = mpv.event_listen()? {
+            let p_len: usize = mpv.get_property("playlist-count")?;
+            let p_pos: usize = mpv.get_property("playlist-pos")?;
+            if p_len - p_pos <= opts.min_buffer_size {
+                println!("after = {after:?}");
+                let (new, new_after) = request(
+                    &opts.subreddit,
+                    opts.sort_by,
+                    opts.buffer_increase as u32,
+                    after.clone(),
+                )
+                .await?;
+                after = new_after;
 
-                    for url in new {
-                        println!("adding {url}");
-                        mpv.playlist_add(
-                            &url,
-                            PlaylistAddTypeOptions::File,
-                            PlaylistAddOptions::Append,
-                        )?;
-                    }
+                for url in new {
+                    println!("adding {url}");
+                    mpv.playlist_add(
+                        &url,
+                        PlaylistAddTypeOptions::File,
+                        PlaylistAddOptions::Append,
+                    )?;
                 }
             }
-            _ => {}
         }
     }
 }
