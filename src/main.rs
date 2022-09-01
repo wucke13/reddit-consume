@@ -2,41 +2,45 @@
 
 use std::process::{Command, Stdio};
 
+use anyhow::Result;
 use clap::Parser;
 use mpvipc::*;
 
 use roux::util::{FeedOption, TimePeriod};
 
-//use reddit::{RedditRequest, SortBy, Timeslot};
-
 #[derive(Debug, clap::Parser)]
 #[clap(about, author, version)]
 struct Args {
+    /// Subreddit to consume
     #[clap()]
     subreddit: String,
 
-    #[clap(subcommand)]
+    /// Criterium to sort by
+    #[clap(arg_enum, default_value = "hot")]
     sort_by: SortBy,
 
-    /// Minimum number of submissions in the playlist before fetching new elements
+    /// When looking at "top", what time period to consider
+    #[clap(arg_enum)]
+    period: Option<Period>,
+
+    /// Fetch new submissions when playlist contains less than this
     #[clap(short, long, default_value = "20")]
     min_buffer_size: usize,
 
-    /// Number of elements to fetch when buffer-size is reached
+    /// Number of elements to fetch
     #[clap(short = 'i', long, default_value = "20")]
     buffer_increase: usize,
 }
 
-#[derive(Debug, clap::Subcommand, Clone, Copy)]
+#[derive(Debug, clap::ArgEnum, Clone, Copy)]
 pub enum SortBy {
     Hot,
-    #[clap(subcommand)]
-    Top(Period),
+    Top,
     New,
     Rising,
 }
 
-#[derive(Debug, clap::Subcommand, Clone, Copy)]
+#[derive(Debug, clap::ArgEnum, Clone, Copy)]
 pub enum Period {
     Hour,
     Day,
@@ -59,45 +63,44 @@ impl From<Period> for TimePeriod {
     }
 }
 
-async fn request(
-    subreddit: &str,
-    sort_by: SortBy,
-    limit: u32,
-    after: Option<String>,
-) -> anyhow::Result<(Vec<String>, Option<String>)> {
-    let sub = roux::subreddit::Subreddit::new(subreddit);
+impl Args {
+    async fn request(
+        &self,
+        limit: u32,
+        after: Option<String>,
+    ) -> Result<(Vec<String>, Option<String>)> {
+        let sub = roux::subreddit::Subreddit::new(&self.subreddit);
 
-    let mut options = FeedOption::new().limit(limit);
-    options.after = after;
+        let mut options = FeedOption::new().limit(limit);
+        options.after = after;
 
-    if let SortBy::Top(p) = sort_by {
-        options.period = Some(p.into());
+        options.period = self.period.map(|p| p.into());
+
+        let options = Some(options);
+        let result = match self.sort_by {
+            SortBy::Hot => sub.hot(limit, options).await,
+            SortBy::Top => sub.top(limit, options).await,
+            SortBy::New => sub.latest(limit, options).await,
+            SortBy::Rising => sub.rising(limit, options).await,
+        }?;
+        let after = result.data.after.clone();
+
+        Ok((
+            result
+                .data
+                .children
+                .iter()
+                .filter_map(|c| c.data.url.as_ref())
+                .cloned()
+                .collect(),
+            after,
+        ))
     }
-
-    let options = Some(options);
-    let result = match sort_by {
-        SortBy::Hot => sub.hot(limit, options).await,
-        SortBy::Top(_) => sub.top(limit, options).await,
-        SortBy::New => sub.latest(limit, options).await,
-        SortBy::Rising => sub.rising(limit, options).await,
-    }?;
-    let after = result.data.after.clone();
-
-    Ok((
-        result
-            .data
-            .children
-            .iter()
-            .filter_map(|c| c.data.url.as_ref())
-            .cloned()
-            .collect(),
-        after,
-    ))
 }
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    let opts = Args::parse();
+async fn main() -> Result<()> {
+    let args = Args::parse();
 
     let ipc_socket = "/tmp/mpvsocket";
 
@@ -112,16 +115,12 @@ async fn main() -> anyhow::Result<()> {
         .expect("failed to execute child");
 
     tokio::time::sleep(std::time::Duration::from_secs(3)).await;
-    let mut mpv = Mpv::connect("/tmp/mpvsocket").unwrap();
+    let mut mpv = Mpv::connect("/tmp/mpvsocket")?;
 
     let mut after = None;
-    let (new, new_after) = request(
-        &opts.subreddit,
-        opts.sort_by,
-        opts.min_buffer_size as u32,
-        after.clone(),
-    )
-    .await?;
+    let (new, new_after) = args
+        .request(args.min_buffer_size as u32, after.clone())
+        .await?;
     after = new_after;
 
     for url in new {
@@ -138,15 +137,11 @@ async fn main() -> anyhow::Result<()> {
         if let Event::EndFile = mpv.event_listen()? {
             let p_len: usize = mpv.get_property("playlist-count")?;
             let p_pos: usize = mpv.get_property("playlist-pos")?;
-            if p_len - p_pos <= opts.min_buffer_size {
+            if p_len - p_pos <= args.min_buffer_size {
                 println!("after = {after:?}");
-                let (new, new_after) = request(
-                    &opts.subreddit,
-                    opts.sort_by,
-                    opts.buffer_increase as u32,
-                    after.clone(),
-                )
-                .await?;
+                let (new, new_after) = args
+                    .request(args.buffer_increase as u32, after.clone())
+                    .await?;
                 after = new_after;
 
                 for url in new {

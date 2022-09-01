@@ -1,14 +1,10 @@
 {
   inputs = {
     utils.url = "github:numtide/flake-utils";
-    fenix = {
-      url = "github:nix-community/fenix";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
-    naersk = {
-      url = "github:nmattia/naersk";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
+    fenix.url = "github:nix-community/fenix";
+    fenix.inputs.nixpkgs.follows = "nixpkgs";
+    naersk.url = "github:nix-community/naersk";
+    naersk.inputs.nixpkgs.follows = "nixpkgs";
   };
 
   outputs = { self, nixpkgs, utils, fenix, naersk, ... }@inputs:
@@ -21,32 +17,28 @@
             stable.cargo
             stable.clippy
             stable.rustfmt
-            targets.x86_64-unknown-linux-gnu.stable.rust-std
-            targets.armv7a-none-eabi.stable.rust-std # TODO check this
+            targets.aarch64-unknown-linux-gnu.stable.rust-std
+            targets.i686-unknown-linux-musl.stable.rust-std
+            targets.x86_64-unknown-linux-musl.stable.rust-std
           ];
         naersk-lib = (naersk.lib.${system}.override {
           cargo = rust-toolchain;
           rustc = rust-toolchain;
         });
+        name = "reddit-consume";
       in
       rec {
-        packages.reddit-consume = naersk-lib.buildPackage {
+        packages.default = naersk-lib.buildPackage {
+          inherit name;
           src = ./.;
           nativeBuildInputs = [ pkgs.pkg-config ];
-          buildInputs = with pkgs; [ mpv openssl ];
+          buildInputs = [ pkgs.openssl ];
+          propagatedBuildInputs = [ pkgs.mpv ];
         };
-        defaultPackage = packages.reddit-consume;
 
-        apps.reddit-consume = utils.lib.mkApp { drv = packages.reddit-consume; name = "reddit-consume"; };
-        defaultApp = apps.reddit-consume;
+        apps.default = utils.lib.mkApp { inherit name; drv = packages.default; };
 
-        devShell = pkgs.mkShell {
-          nativeBuildInputs = with pkgs; [
-            rust-toolchain
-            gcc
-          ] ++ packages.reddit-consume.nativeBuildInputs;
-          buildInputs = packages.reddit-consume.buildInputs;
-        };
+        devShells.default = pkgs.mkShell { inputsFrom = [ packages.default ]; };
       });
 }
 
