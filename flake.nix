@@ -1,44 +1,38 @@
 {
   inputs = {
-    utils.url = "github:numtide/flake-utils";
-    fenix.url = "github:nix-community/fenix";
-    fenix.inputs.nixpkgs.follows = "nixpkgs";
-    naersk.url = "github:nix-community/naersk";
-    naersk.inputs.nixpkgs.follows = "nixpkgs";
+    nixpkgs.url = "github:NixOS/nixpkgs";
+    flake-utils.url = "github:numtide/flake-utils";
   };
 
-  outputs = { self, nixpkgs, utils, fenix, naersk, ... }@inputs:
-    utils.lib.eachSystem [ "aarch64-linux" "i686-linux" "x86_64-linux" ] (system:
+  outputs = { self, nixpkgs, flake-utils }@inputs:
+    flake-utils.lib.eachSystem [ "aarch64-linux" "i686-linux" "x86_64-linux" ] (system:
       let
         pkgs = nixpkgs.legacyPackages."${system}";
-        rust-toolchain = with fenix.packages.${system};
-          combine [
-            stable.rustc
-            stable.cargo
-            stable.clippy
-            stable.rustfmt
-            targets.aarch64-unknown-linux-gnu.stable.rust-std
-            targets.i686-unknown-linux-musl.stable.rust-std
-            targets.x86_64-unknown-linux-musl.stable.rust-std
-          ];
-        naersk-lib = (naersk.lib.${system}.override {
-          cargo = rust-toolchain;
-          rustc = rust-toolchain;
-        });
-        name = "reddit-consume";
+        cargoToml = builtins.fromTOML (builtins.readFile ./Cargo.toml);
+        name = cargoToml.package.name;
+        version = cargoToml.package.version;
       in
       rec {
-        packages.default = naersk-lib.buildPackage {
-          inherit name;
+        packages.default = pkgs.rustPlatform.buildRustPackage {
+          pname = name;
+          inherit version;
           src = ./.;
-          nativeBuildInputs = [ pkgs.pkg-config ];
+          cargoLock = {
+            lockFile = ./Cargo.lock;
+          };
+          nativeBuildInputs = with pkgs; [ pkg-config makeWrapper ];
           buildInputs = [ pkgs.openssl ];
-          propagatedBuildInputs = [ pkgs.mpv ];
+          postInstall = ''
+            wrapProgram $out/bin/${name} --prefix PATH : ${with pkgs; lib.makeBinPath [ mpv yt-dlp ]}
+          '';
         };
 
-        apps.default = utils.lib.mkApp { inherit name; drv = packages.default; };
+        apps.default = flake-utils.lib.mkApp { inherit name; drv = packages.default; };
 
-        devShells.default = pkgs.mkShell { inputsFrom = [ packages.default ]; };
+        devShells.default = pkgs.mkShell {
+          inputsFrom = [ packages.default ];
+          nativeBuildInputs = with pkgs; [ mpv yt-dlp ];
+        };
       });
 }
 

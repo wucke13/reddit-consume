@@ -11,11 +11,17 @@ use roux::util::{FeedOption, TimePeriod};
 #[derive(Debug, clap::Parser)]
 #[clap(about, author, version)]
 struct Args {
+    /// Type of feed to browse
+    #[clap(arg_enum)]
+    feed_type: FeedType,
+
     /// Subreddit to consume
     #[clap()]
-    subreddit: String,
+    resource: String,
 
     /// Criterium to sort by
+    ///
+    /// Ignore if consuming a user feed
     #[clap(arg_enum, default_value = "hot")]
     sort_by: SortBy,
 
@@ -30,13 +36,23 @@ struct Args {
     /// Number of elements to fetch
     #[clap(short = 'i', long, default_value = "20")]
     buffer_increase: usize,
+
+    /// User agent to pass to mpv
+    #[clap(long)]
+    user_agent: Option<String>,
+}
+
+#[derive(Debug, clap::ArgEnum, Clone, Copy)]
+pub enum FeedType {
+    Sub,
+    User,
 }
 
 #[derive(Debug, clap::ArgEnum, Clone, Copy)]
 pub enum SortBy {
     Hot,
     Top,
-    New,
+    Latest,
     Rising,
 }
 
@@ -49,7 +65,6 @@ pub enum Period {
     Year,
     All,
 }
-
 impl From<Period> for TimePeriod {
     fn from(p: Period) -> TimePeriod {
         match p {
@@ -69,32 +84,51 @@ impl Args {
         limit: u32,
         after: Option<String>,
     ) -> Result<(Vec<String>, Option<String>)> {
-        let sub = roux::subreddit::Subreddit::new(&self.subreddit);
-
         let mut options = FeedOption::new().limit(limit);
         options.after = after;
 
         options.period = self.period.map(|p| p.into());
 
         let options = Some(options);
-        let result = match self.sort_by {
-            SortBy::Hot => sub.hot(limit, options).await,
-            SortBy::Top => sub.top(limit, options).await,
-            SortBy::New => sub.latest(limit, options).await,
-            SortBy::Rising => sub.rising(limit, options).await,
-        }?;
-        let after = result.data.after.clone();
+        let result = match (self.feed_type, self.sort_by) {
+            (FeedType::Sub, SortBy::Hot) => {
+                roux::subreddit::Subreddit::new(&self.resource)
+                    .hot(limit, options)
+                    .await
+            }
 
-        Ok((
-            result
-                .data
-                .children
-                .iter()
-                .filter_map(|c| c.data.url.as_ref())
-                .cloned()
-                .collect(),
-            after,
-        ))
+            (FeedType::Sub, SortBy::Latest) => {
+                roux::subreddit::Subreddit::new(&self.resource)
+                    .latest(limit, options)
+                    .await
+            }
+
+            (FeedType::Sub, SortBy::Rising) => {
+                roux::subreddit::Subreddit::new(&self.resource)
+                    .rising(limit, options)
+                    .await
+            }
+            (FeedType::Sub, SortBy::Top) => {
+                roux::subreddit::Subreddit::new(&self.resource)
+                    .top(limit, options)
+                    .await
+            }
+            (FeedType::User, _) => {
+                roux::user::User::new(&self.resource)
+                    .submitted(options)
+                    .await
+            }
+        }?;
+
+        let after = result.data.after.clone();
+        let url_vec = result
+            .data
+            .children
+            .iter()
+            .filter_map(|c| c.data.url.as_ref())
+            .cloned()
+            .collect();
+        Ok((url_vec, after))
     }
 }
 
@@ -108,6 +142,12 @@ async fn main() -> Result<()> {
     let _mpv_process = Command::new("mpv")
         .arg("--idle=yes")
         .arg("--force-window")
+        .arg(
+            args.user_agent
+                .as_ref()
+                .map(|ua| format!("--user-agent={ua}"))
+                .unwrap_or(String::new()),
+        )
         .arg(format!("--input-ipc-server={ipc_socket}"))
         .stdin(Stdio::null())
         .stdout(Stdio::null())
