@@ -132,6 +132,12 @@ impl Args {
     }
 }
 
+fn hash<T: std::hash::Hash>(hashable: T) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    hashable.hash(&mut hasher);
+    std::hash::Hasher::finish(&hasher)
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
@@ -163,7 +169,11 @@ async fn main() -> Result<()> {
         .await?;
     after = new_after;
 
+    let mut dedup_list = std::collections::HashSet::new();
     for url in new {
+        if !dedup_list.insert(hash(&url)) {
+            continue;
+        }
         println!("adding {url}");
         mpv.playlist_add(
             &url,
@@ -185,6 +195,9 @@ async fn main() -> Result<()> {
                 after = new_after;
 
                 for url in new {
+                    if !dedup_list.insert(hash(&url)) {
+                        continue;
+                    }
                     println!("adding {url}");
                     mpv.playlist_add(
                         &url,
