@@ -1,6 +1,5 @@
 {
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs";
     flake-utils.url = "github:numtide/flake-utils";
   };
 
@@ -23,7 +22,7 @@
           nativeBuildInputs = with pkgs; [ pkg-config makeWrapper ];
           buildInputs = [ pkgs.openssl ];
           postInstall = ''
-            wrapProgram $out/bin/${name} --prefix PATH : ${with pkgs; lib.makeBinPath [ mpv yt-dlp ]}
+            wrapProgram $out/bin/${name} --suffix PATH : ${with pkgs; lib.makeBinPath [ mpv yt-dlp ]}
           '';
         };
 
@@ -31,7 +30,13 @@
 
         devShells.default = pkgs.mkShell {
           inputsFrom = [ packages.default ];
-          nativeBuildInputs = with pkgs; [ mpv yt-dlp ];
+          nativeBuildInputs = with pkgs; [
+            mpv
+            yt-dlp
+
+            clippy
+            rustfmt
+          ];
         };
       });
 }

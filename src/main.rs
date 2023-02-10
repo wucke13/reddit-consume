@@ -1,6 +1,9 @@
 #![forbid(unsafe_code)]
 
-use std::process::{Command, Stdio};
+use std::{
+    io::{BufRead, BufReader},
+    process::{Command, Stdio},
+};
 
 use anyhow::Result;
 use clap::Parser;
@@ -145,20 +148,34 @@ async fn main() -> Result<()> {
     let ipc_socket = "/tmp/mpvsocket";
 
     // prepare mpv
-    let _mpv_process = Command::new("mpv")
-        .arg("--idle=yes")
-        .arg("--force-window")
-        .arg(
-            args.user_agent
+    let mut mpv_process = Command::new("mpv")
+        .args([
+            "--idle=yes",
+            "--quiet",
+            "--force-window",
+            &format!("--input-ipc-server={ipc_socket}"),
+            &args
+                .user_agent
                 .as_ref()
                 .map(|ua| format!("--user-agent={ua}"))
-                .unwrap_or(String::new()),
-        )
-        .arg(format!("--input-ipc-server={ipc_socket}"))
+                .unwrap_or_default(),
+        ])
         .stdin(Stdio::null())
-        .stdout(Stdio::null())
+        .stdout(Stdio::piped())
         .spawn()
         .expect("failed to execute child");
+    let stdout = mpv_process
+        .stdout
+        .take()
+        .expect("unable to take mpv stdout");
+
+    // spawn a thread for organized printing
+    std::thread::spawn(move || {
+        let mpv_reader = BufReader::new(stdout);
+        for line in mpv_reader.lines().filter_map(Result::ok) {
+            println!("mpv {line}");
+        }
+    });
 
     tokio::time::sleep(std::time::Duration::from_secs(3)).await;
     let mut mpv = Mpv::connect("/tmp/mpvsocket")?;
