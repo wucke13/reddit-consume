@@ -10,6 +10,7 @@ use clap::Parser;
 use mpvipc::*;
 
 use roux::util::{FeedOption, TimePeriod};
+use tokio::time::sleep;
 
 #[derive(Debug, clap::Parser)]
 #[clap(about, author, version)]
@@ -206,21 +207,29 @@ async fn main() -> Result<()> {
             let p_pos: usize = mpv.get_property("playlist-pos")?;
             if p_len - p_pos <= args.min_buffer_size {
                 println!("after = {after:?}");
-                let (new, new_after) = args
+                match args
                     .request(args.buffer_increase as u32, after.clone())
-                    .await?;
-                after = new_after;
+                    .await
+                {
+                    Ok((new, new_after)) => {
+                        after = new_after;
 
-                for url in new {
-                    if !dedup_list.insert(hash(&url)) {
-                        continue;
+                        for url in new {
+                            if !dedup_list.insert(hash(&url)) {
+                                continue;
+                            }
+                            println!("adding {url}");
+                            mpv.playlist_add(
+                                &url,
+                                PlaylistAddTypeOptions::File,
+                                PlaylistAddOptions::Append,
+                            )?;
+                        }
                     }
-                    println!("adding {url}");
-                    mpv.playlist_add(
-                        &url,
-                        PlaylistAddTypeOptions::File,
-                        PlaylistAddOptions::Append,
-                    )?;
+                    Err(e) => {
+                        println!("an error occured: {e}, retrying in 5 seconds");
+                        sleep(std::time::Duration::from_secs(5)).await;
+                    }
                 }
             }
         }
