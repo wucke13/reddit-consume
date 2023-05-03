@@ -5,7 +5,7 @@ use std::{
     process::{Command, Stdio},
 };
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::Parser;
 use mpvipc::*;
 
@@ -15,22 +15,17 @@ use tokio::time::sleep;
 #[derive(Debug, clap::Parser)]
 #[clap(about, author, version)]
 struct Args {
-    /// Type of feed to browse
-    #[clap(arg_enum)]
-    feed_type: FeedType,
-
-    /// Subreddit to consume
+    /// resource to consume
     #[clap()]
     resource: String,
 
     /// Criterium to sort by
     ///
     /// Ignore if consuming a user feed
-    #[clap(arg_enum, default_value = "hot")]
+    #[clap(default_value = "hot")]
     sort_by: SortBy,
 
     /// When looking at "top", what time period to consider
-    #[clap(arg_enum)]
     period: Option<Period>,
 
     /// Fetch new submissions when playlist contains less than this
@@ -44,15 +39,19 @@ struct Args {
     /// User agent to pass to mpv
     #[clap(long)]
     user_agent: Option<String>,
+
+    /// Include NSFW content
+    #[clap(short, long)]
+    nsfw: bool,
 }
 
-#[derive(Debug, clap::ArgEnum, Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub enum FeedType {
     Sub,
     User,
 }
 
-#[derive(Debug, clap::ArgEnum, Clone, Copy)]
+#[derive(Debug, clap::ValueEnum, Clone, Copy)]
 pub enum SortBy {
     Hot,
     Top,
@@ -60,7 +59,7 @@ pub enum SortBy {
     Rising,
 }
 
-#[derive(Debug, clap::ArgEnum, Clone, Copy)]
+#[derive(Debug, clap::ValueEnum, Clone, Copy)]
 pub enum Period {
     Hour,
     Day,
@@ -92,37 +91,65 @@ impl Args {
         options.after = after;
 
         options.period = self.period.map(|p| p.into());
+        let feed_type = if self.resource.starts_with("u/") {
+            FeedType::User
+        } else if self.resource.starts_with("r/") {
+            FeedType::Sub
+        } else {
+            println!("did not find that, here are some search results");
+            let mut options = FeedOption::new();
+            options.limit = Some(limit);
+
+            let suggestions = roux::Subreddits::search(
+                &format!(
+                    "{}&include_over_18={}",
+                    self.resource,
+                    if self.nsfw { "on" } else { "off" }
+                ),
+                Some(limit),
+                Some(options),
+            )
+            .await
+            .context("unable to fetch suggestions")?;
+            for s in suggestions.data.children.into_iter().map(|x| x.data) {
+                println!(
+                    "{} - {}",
+                    s.display_name_prefixed.unwrap(),
+                    s.title.unwrap()
+                );
+            }
+
+            std::process::exit(0);
+        };
 
         let options = Some(options);
-        let result = match (self.feed_type, self.sort_by) {
+        let resource = &self.resource.clone().split_off(2);
+        let result = match (feed_type, self.sort_by) {
             (FeedType::Sub, SortBy::Hot) => {
-                roux::subreddit::Subreddit::new(&self.resource)
+                roux::subreddit::Subreddit::new(resource)
                     .hot(limit, options)
                     .await
             }
 
             (FeedType::Sub, SortBy::Latest) => {
-                roux::subreddit::Subreddit::new(&self.resource)
+                roux::subreddit::Subreddit::new(resource)
                     .latest(limit, options)
                     .await
             }
 
             (FeedType::Sub, SortBy::Rising) => {
-                roux::subreddit::Subreddit::new(&self.resource)
+                roux::subreddit::Subreddit::new(resource)
                     .rising(limit, options)
                     .await
             }
             (FeedType::Sub, SortBy::Top) => {
-                roux::subreddit::Subreddit::new(&self.resource)
+                roux::subreddit::Subreddit::new(resource)
                     .top(limit, options)
                     .await
             }
-            (FeedType::User, _) => {
-                roux::user::User::new(&self.resource)
-                    .submitted(options)
-                    .await
-            }
-        }?;
+            (FeedType::User, _) => roux::user::User::new(resource).submitted(options).await,
+        }
+        .context("unable to create stream")?;
 
         let after = result.data.after.clone();
         let url_vec = result
@@ -148,9 +175,16 @@ async fn main() -> Result<()> {
 
     let ipc_socket = "/tmp/mpvsocket";
 
+    let mut after = None;
+    let (new, new_after) = args
+        .request(args.min_buffer_size as u32, after.clone())
+        .await?;
+    after = new_after;
+
     // prepare mpv
     let mut mpv_process = Command::new("mpv")
         .args([
+            "null://",
             "--idle=yes",
             "--quiet",
             "--force-window",
@@ -180,12 +214,6 @@ async fn main() -> Result<()> {
 
     tokio::time::sleep(std::time::Duration::from_secs(3)).await;
     let mut mpv = Mpv::connect("/tmp/mpvsocket")?;
-
-    let mut after = None;
-    let (new, new_after) = args
-        .request(args.min_buffer_size as u32, after.clone())
-        .await?;
-    after = new_after;
 
     let mut dedup_list = std::collections::HashSet::new();
     for url in new {
