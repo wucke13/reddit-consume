@@ -11,7 +11,7 @@ repository = "https://github.com/wucke13/reddit-consume"
 
 [dependencies]
 anyhow = "1"
-casey = "0.3"
+casey = "*"
 clap = { version = "4", features = ["derive"] }
 mpvipc = "1"
 roux = "2"
