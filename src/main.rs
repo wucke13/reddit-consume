@@ -1,166 +1,25 @@
 #![forbid(unsafe_code)]
 
+use clap::Parser;
+
 use std::{
     io::{BufRead, BufReader},
     process::{Command, Stdio},
 };
 
-use anyhow::{Context, Result};
-use clap::Parser;
+use anyhow::Result;
 use mpvipc::*;
 
-use roux::util::{FeedOption, TimePeriod};
 use tokio::time::sleep;
 
-#[derive(Debug, clap::Parser)]
-#[clap(about, author, version)]
-struct Args {
-    /// resource to consume
-    #[clap()]
-    resource: String,
+pub mod reddit_cli;
 
-    /// Criterium to sort by
-    ///
-    /// Ignore if consuming a user feed
-    #[clap(default_value = "hot")]
-    sort_by: SortBy,
-
-    /// When looking at "top", what time period to consider
-    period: Option<Period>,
-
-    /// Fetch new submissions when playlist contains less than this
-    #[clap(short, long, default_value = "20")]
-    min_buffer_size: usize,
-
-    /// Number of elements to fetch
-    #[clap(short = 'i', long, default_value = "20")]
-    buffer_increase: usize,
-
-    /// User agent to pass to mpv
-    #[clap(long)]
-    user_agent: Option<String>,
-
-    /// Include NSFW content
-    #[clap(short, long)]
-    nsfw: bool,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum FeedType {
-    Sub,
-    User,
-}
-
-#[derive(Debug, clap::ValueEnum, Clone, Copy)]
-pub enum SortBy {
-    Hot,
-    Top,
-    Latest,
-    Rising,
-}
-
-#[derive(Debug, clap::ValueEnum, Clone, Copy)]
-pub enum Period {
-    Hour,
-    Day,
-    Week,
-    Month,
-    Year,
-    All,
-}
-impl From<Period> for TimePeriod {
-    fn from(p: Period) -> TimePeriod {
-        match p {
-            Period::Hour => TimePeriod::Now,
-            Period::Day => TimePeriod::Today,
-            Period::Week => TimePeriod::ThisWeek,
-            Period::Month => TimePeriod::ThisMonth,
-            Period::Year => TimePeriod::ThisYear,
-            Period::All => TimePeriod::AllTime,
-        }
-    }
-}
-
-impl Args {
+pub(crate) trait LinkSource {
     async fn request(
         &self,
         limit: u32,
         after: Option<String>,
-    ) -> Result<(Vec<String>, Option<String>)> {
-        let mut options = FeedOption::new().limit(limit);
-        options.after = after;
-
-        options.period = self.period.map(|p| p.into());
-        let feed_type = if self.resource.starts_with("u/") {
-            FeedType::User
-        } else if self.resource.starts_with("r/") {
-            FeedType::Sub
-        } else {
-            println!("did not find that, here are some search results");
-            let mut options = FeedOption::new();
-            options.limit = Some(limit);
-
-            let suggestions = roux::Subreddits::search(
-                &format!(
-                    "{}&include_over_18={}",
-                    self.resource,
-                    if self.nsfw { "on" } else { "off" }
-                ),
-                Some(limit),
-                Some(options),
-            )
-            .await
-            .context("unable to fetch suggestions")?;
-            for s in suggestions.data.children.into_iter().map(|x| x.data) {
-                println!(
-                    "{} - {}",
-                    s.display_name_prefixed.unwrap(),
-                    s.title.unwrap()
-                );
-            }
-
-            std::process::exit(0);
-        };
-
-        let options = Some(options);
-        let resource = &self.resource.clone().split_off(2);
-        let result = match (feed_type, self.sort_by) {
-            (FeedType::Sub, SortBy::Hot) => {
-                roux::subreddit::Subreddit::new(resource)
-                    .hot(limit, options)
-                    .await
-            }
-
-            (FeedType::Sub, SortBy::Latest) => {
-                roux::subreddit::Subreddit::new(resource)
-                    .latest(limit, options)
-                    .await
-            }
-
-            (FeedType::Sub, SortBy::Rising) => {
-                roux::subreddit::Subreddit::new(resource)
-                    .rising(limit, options)
-                    .await
-            }
-            (FeedType::Sub, SortBy::Top) => {
-                roux::subreddit::Subreddit::new(resource)
-                    .top(limit, options)
-                    .await
-            }
-            (FeedType::User, _) => roux::user::User::new(resource).submitted(options).await,
-        }
-        .context("unable to create stream")?;
-
-        let after = result.data.after.clone();
-        let url_vec = result
-            .data
-            .children
-            .iter()
-            .filter_map(|c| c.data.url.as_ref())
-            .cloned()
-            .collect();
-        Ok((url_vec, after))
-    }
+    ) -> Result<(Vec<String>, Option<String>)>;
 }
 
 fn hash<T: std::hash::Hash>(hashable: T) -> u64 {
@@ -171,7 +30,7 @@ fn hash<T: std::hash::Hash>(hashable: T) -> u64 {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let args = Args::parse();
+    let args = reddit_cli::Args::parse();
 
     let ipc_socket = "/tmp/mpvsocket";
 
