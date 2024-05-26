@@ -1,25 +1,38 @@
 #![forbid(unsafe_code)]
 
-use clap::Parser;
-
 use std::{
     io::{BufRead, BufReader},
     process::{Command, Stdio},
 };
 
 use anyhow::Result;
+use async_trait::async_trait;
 use mpvipc::*;
 
 use tokio::time::sleep;
 
+pub mod lemmy_cli;
 pub mod reddit_cli;
 
+#[async_trait]
 pub(crate) trait LinkSource {
-    async fn request(
-        &self,
-        limit: u32,
-        after: Option<String>,
-    ) -> Result<(Vec<String>, Option<String>)>;
+    async fn request(&mut self) -> Result<Vec<String>>;
+    fn get_common_cli(&self) -> CommonCli;
+}
+
+#[derive(Clone, Debug, clap::Parser)]
+pub struct CommonCli {
+    /// Fetch new submissions when playlist contains less than this
+    #[clap(short, long, default_value = "20")]
+    pub min_buffer_size: usize,
+
+    /// Number of elements to fetch
+    #[clap(short = 'i', long, default_value = "20")]
+    pub buffer_increase: usize,
+
+    /// User agent to pass to mpv
+    #[clap(long)]
+    pub user_agent: Option<String>,
 }
 
 fn hash<T: std::hash::Hash>(hashable: T) -> u64 {
@@ -30,15 +43,21 @@ fn hash<T: std::hash::Hash>(hashable: T) -> u64 {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let args = reddit_cli::Args::parse();
+    let arg0 = std::env::args().next().expect("args[0] not set");
+
+    let mut link_source: Box<dyn LinkSource> = if arg0.ends_with("lemmy-consume") {
+        Box::new(lemmy_cli::LemmyLinkSource::new())
+    } else if arg0.ends_with("reddit-consume") {
+        Box::new(reddit_cli::RedditLinkSource::new())
+    } else {
+        panic!("i have identity crisis")
+    };
+
+    let common_cli = link_source.get_common_cli().clone();
 
     let ipc_socket = "/tmp/mpvsocket";
 
-    let mut after = None;
-    let (new, new_after) = args
-        .request(args.min_buffer_size as u32, after.clone())
-        .await?;
-    after = new_after;
+    let new = link_source.request().await?;
 
     // prepare mpv
     let mut mpv_process = Command::new("mpv")
@@ -48,7 +67,7 @@ async fn main() -> Result<()> {
             "--quiet",
             "--force-window",
             &format!("--input-ipc-server={ipc_socket}"),
-            &args
+            &common_cli
                 .user_agent
                 .as_ref()
                 .map(|ua| format!("--user-agent={ua}"))
@@ -66,7 +85,7 @@ async fn main() -> Result<()> {
     // spawn a thread for organized printing
     std::thread::spawn(move || {
         let mpv_reader = BufReader::new(stdout);
-        for line in mpv_reader.lines().filter_map(Result::ok) {
+        for line in mpv_reader.lines().map_while(Result::ok) {
             println!("mpv {line}");
         }
     });
@@ -92,15 +111,9 @@ async fn main() -> Result<()> {
         if let Event::EndFile = mpv.event_listen()? {
             let p_len: usize = mpv.get_property("playlist-count")?;
             let p_pos: usize = mpv.get_property("playlist-pos")?;
-            if p_len - p_pos <= args.min_buffer_size {
-                println!("after = {after:?}");
-                match args
-                    .request(args.buffer_increase as u32, after.clone())
-                    .await
-                {
-                    Ok((new, new_after)) => {
-                        after = new_after;
-
+            if p_len - p_pos <= common_cli.min_buffer_size {
+                match link_source.request().await {
+                    Ok(new) => {
                         for url in new {
                             if !dedup_list.insert(hash(&url)) {
                                 continue;

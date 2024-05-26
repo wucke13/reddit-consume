@@ -8,11 +8,21 @@ description = "Tool for viewing content from reddit in mpv"
 readme = "README.md"
 repository = "https://github.com/wucke13/reddit-consume"
 
+[[bin]]
+name = "lemmy-consume"
+path = "src/main.rs"
+
+[[bin]]
+name = "reddit-consume"
+path = "src/main.rs"
 
 [dependencies]
 anyhow = "1"
+async-trait = "0.1.80"
 casey = "*"
 clap = { version = "4", features = ["derive"] }
+lemmy-client = "0.19.3"
 mpvipc = "1"
 roux = "2"
+strum = { version = "0.26.2", features = ["derive"] }
 tokio = { version = "1", default-features = false, features = ["macros", "rt-multi-thread"] }

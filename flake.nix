@@ -23,7 +23,10 @@
           nativeBuildInputs = with pkgs; [ pkg-config makeWrapper ];
           buildInputs = [ pkgs.openssl ];
           postInstall = ''
-            wrapProgram $out/bin/${name} --suffix PATH : ${with pkgs; lib.makeBinPath [ mpv yt-dlp ]}
+            for program in {lemmy,reddit}-consume
+            do
+              wrapProgram $out/bin/$program --suffix PATH : ${with pkgs; lib.makeBinPath [ mpv yt-dlp ]}
+            done
           '';
         };
 
