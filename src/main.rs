@@ -66,6 +66,8 @@ async fn main() -> Result<()> {
             "--idle=yes",
             "--quiet",
             "--force-window",
+            "--auto-window-resize=no",
+            "--no-keepaspect-window",
             &format!("--input-ipc-server={ipc_socket}"),
             &common_cli
                 .user_agent
