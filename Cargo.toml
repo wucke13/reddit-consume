@@ -21,6 +21,7 @@ anyhow = "1"
 async-trait = "0.1.80"
 casey = "*"
 clap = { version = "4", features = ["derive"] }
+clap_complete = "4.5.33"
 lemmy-client = "0.19.3"
 mpvipc = "1"
 roux = "2"
